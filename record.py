@@ -62,10 +62,10 @@ def record_screen_loop():
         try:
             sct_img = sct.grab(monitor)
             img = np.array(sct_img)
-            img_bgr = cv2.cvtColor(img, cv2.COLOR_RGBA2BGR)
-            gray_img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-            gray_img_bgr = cv2.cvtColor(gray_img, cv2.COLOR_GRAY2BGR)
-            resized_img = cv2.resize(gray_img_bgr, (TARGET_WIDTH, TARGET_HEIGHT))
+
+            img_bgr = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR) # Corrected: mss on Windows outputs BGRA, convert to BGR
+
+            resized_img = cv2.resize(img_bgr, (TARGET_WIDTH, TARGET_HEIGHT))
             
             with recording_state_lock: # Ensure we don't try to write if writer is released
                 if current_video_writer:
