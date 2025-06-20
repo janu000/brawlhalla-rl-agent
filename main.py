@@ -1,5 +1,5 @@
 from stable_baselines3 import PPO
-from stable_baselines3.common.env_checker import check_env
+from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.common.policies import ActorCriticPolicy
 import time
 
@@ -19,7 +19,12 @@ class ActionEmbeddingPolicy(ActorCriticPolicy):
         )
 
 env = BrawlhallaEnv()
-check_env(env, warn=True)
+
+checkpoint_callback = CheckpointCallback(
+    save_freq=20_000,  # Save every N steps
+    save_path='./checkpoints/',
+    name_prefix='ppo_brawlhalla'
+)
 
 model = PPO(
     ActionEmbeddingPolicy,
@@ -37,7 +42,7 @@ time.sleep(2)
 print("Starting Training")
 
 try:
-    model.learn(total_timesteps=10_000)
+    model.learn(total_timesteps=800_000, callback=checkpoint_callback)
 except KeyboardInterrupt:
     print("\nTraining interrupted by user. Closing environment...")
 finally:

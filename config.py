@@ -1,8 +1,8 @@
-IMAGE_CHANNELS = 1
+IMAGE_CHANNELS = 3
 IMAGE_WIDTH = 256
 IMAGE_HEIGHT = 144
 
-HISTORY_LENGTH = 8      # last N actions
+HISTORY_LENGTH = 64      # last N actions
 EMBED_DIM = 16
 LEARNING_RATE = 1e-3 
 REC_FPS = 60
@@ -41,9 +41,9 @@ ACTION_LUT = [
 NUM_ACTIONS = len(ACTION_LUT)
 
 # PPO hyperparameters
-N_STEPS = 204800         # Number of environment steps per training iteration
+N_STEPS = 2048        # Number of environment steps per training iteration
 BATCH_SIZE = 64        # Size of each minibatch for training
 N_EPOCHS = 10          # Number of times to iterate over the collected data
 
-HEALTH1_POS = (100, 1774) # y, x
-HEALTH2_POS = (100, 1867) # y, x 
+HEALTH1_POS = (100, 1774) # Note: y, x !
+HEALTH2_POS = (100, 1867) # Note: y, x !

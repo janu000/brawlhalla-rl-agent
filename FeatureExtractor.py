@@ -22,31 +22,24 @@ class CNNWithActionEmbedding(BaseFeaturesExtractor):
             sample_input = th.zeros(1, IMAGE_CHANNELS, IMAGE_HEIGHT, IMAGE_WIDTH)
             cnn_out_dim = self.cnn(sample_input).shape[1]
 
-        self.cnn_fc = nn.Sequential(
-            nn.Linear(cnn_out_dim, 256),
-            nn.ReLU()
-        )
 
         # Action history embedding
         self.action_embedding = nn.Embedding(NUM_ACTIONS, EMBED_DIM)
-        self.history_ff = nn.Sequential(
-            nn.Linear(HISTORY_LENGTH * EMBED_DIM, 128),
-            nn.LayerNorm(128),
-            nn.ReLU()
-        )
+        self.rnn = nn.GRU(input_size=EMBED_DIM, hidden_size=128, batch_first=True)
 
         self.final_dim = cnn_out_dim + 128
         self._features_dim = self.final_dim
 
     def forward(self, obs):
+        # Normalize image input
         x_img = obs["image"].float() / 255.0
-        x_action = obs["action_history"].long()
-
         cnn_out = self.cnn(x_img)
-        # cnn_feat = self.cnn_fc(cnn_out)
 
-        embedded = self.action_embedding(x_action)  # shape: [B, N, D]
-        embedded = embedded.view(embedded.size(0), -1)
-        action_feat = self.history_ff(embedded)  # flatten to [batch, history_len * embed_dim]
+        # Process action history with GRU
+        x_action = obs["action_history"].long()  # shape: [B, T]
+        embedded = self.action_embedding(x_action)  # shape: [B, T, D]
+        _, hidden = self.rnn(embedded)  # hidden: [1, B, 128]
+        action_feat = hidden.squeeze(0)  # shape: [B, 128]
 
+        # Combine image and action history features
         return th.cat([cnn_out, action_feat], dim=1)

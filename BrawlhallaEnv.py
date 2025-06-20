@@ -58,9 +58,9 @@ class BrawlhallaEnv(gym.Env):
 
     def step(self, action_idx):
 
-        # self.perform_action(action_idx)
+        self.perform_action(action_idx)
 
-        # Enforce LEARNING_FPS
+        # Enforce LEARNING_FPS to keep a consistent fps during training since we dont have full control over the environment
         current_time = time.monotonic()
         if self.step_time:
             time_per_frame = 1.0 / LEARNING_FPS
@@ -128,17 +128,31 @@ class BrawlhallaEnv(gym.Env):
         o_damage, o_died = self.opponent_healthtracker.update(opponent_health_bgr)
 
         current_time = time.time()
-        # if death occurred, start the reward override timer
+
+        # check if we're still within the respawn period
+        if current_time - self.last_death_time < 4:
+            return 0.0
+        
+        # if death occurred, start the reward override timer for respawning
         if p_died or o_died:
             self.last_death_time = current_time
-
-        # check if we're still within the reward override period
-        if current_time - self.last_death_time < 5:
-            return 1.0
         
+        r = 0
 
+        if o_died:
+            r += 1
         
-        return 1 - action_idx/NUM_ACTIONS  # placeholder
+        if p_died:
+            r -= 1
+        
+        r += o_damage / 100 - p_damage / 100
+
+        attacking_actions = set([7,8,12,13,15,16,20,21]) # all action_idx that are attacks (see ACTION_LUT in config)
+        # if attack missed
+        if action_idx in attacking_actions and o_damage == 0:
+            r -= 0.01
+
+        return r
 
     def check_done(self):
         # Detect if game is over
