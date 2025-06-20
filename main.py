@@ -1,0 +1,32 @@
+from stable_baselines3 import PPO
+from stable_baselines3.common.env_checker import check_env
+from stable_baselines3.common.policies import ActorCriticPolicy
+
+from BrawlhallaEnv import BrawlhallaEnv
+from FeatureExtractor import CNNWithActionEmbedding
+from config import *
+
+class ActionEmbeddingPolicy(ActorCriticPolicy):
+    def __init__(self, observation_space, action_space, lr_schedule, **kwargs):
+        super().__init__(
+            observation_space,
+            action_space,
+            lr_schedule,
+            features_extractor_class=CNNWithActionEmbedding,
+            features_extractor_kwargs=dict(cnn_out_dim=256),
+            **kwargs,
+        )
+
+env = BrawlhallaEnv()
+check_env(env, warn=True)
+
+model = PPO(ActionEmbeddingPolicy, env, verbose=1, tensorboard_log="./ppo_brawlhalla_logs", learning_rate=LEARNING_RATE)
+model.learn(total_timesteps=10_000)
+
+obs = model.env.reset()
+for _ in range(10):
+    action, _ = model.predict(obs)
+    print("Predicted action:", action)
+    obs, reward, terminated, truncated, _ = env.step(action)
+    if terminated:
+        obs = env.reset()
