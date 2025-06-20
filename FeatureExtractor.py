@@ -43,10 +43,10 @@ class CNNWithActionEmbedding(BaseFeaturesExtractor):
         x_action = obs["action_history"].long()
 
         cnn_out = self.cnn(x_img)
-        cnn_feat = self.cnn_fc(cnn_out)
+        # cnn_feat = self.cnn_fc(cnn_out)
 
         embedded = self.action_embedding(x_action)  # shape: [B, N, D]
         embedded = embedded.view(embedded.size(0), -1)
         action_feat = self.history_ff(embedded)  # flatten to [batch, history_len * embed_dim]
 
-        return th.cat([cnn_feat, action_feat], dim=1)
+        return th.cat([cnn_out, action_feat], dim=1)

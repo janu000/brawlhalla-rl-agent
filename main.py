@@ -1,6 +1,7 @@
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.policies import ActorCriticPolicy
+import time
 
 from BrawlhallaEnv import BrawlhallaEnv
 from FeatureExtractor import CNNWithActionEmbedding
@@ -20,10 +21,29 @@ class ActionEmbeddingPolicy(ActorCriticPolicy):
 env = BrawlhallaEnv()
 check_env(env, warn=True)
 
-model = PPO(ActionEmbeddingPolicy, env, verbose=1, tensorboard_log="./ppo_brawlhalla_logs", learning_rate=LEARNING_RATE)
-model.learn(total_timesteps=10_000)
+model = PPO(
+    ActionEmbeddingPolicy,
+    env,
+    verbose=1,
+    tensorboard_log="./ppo_brawlhalla_logs",
+    learning_rate=LEARNING_RATE,
+    n_steps=N_STEPS,
+    batch_size=BATCH_SIZE,
+    n_epochs=N_EPOCHS
+)
 
-obs = model.env.reset()
+print("Enter Brawhalla within 2s")
+time.sleep(2)
+print("Starting Training")
+
+try:
+    model.learn(total_timesteps=10_000)
+except KeyboardInterrupt:
+    print("\nTraining interrupted by user. Closing environment...")
+finally:
+    env.close()
+
+obs, _ = model.env.reset()
 for _ in range(10):
     action, _ = model.predict(obs)
     print("Predicted action:", action)

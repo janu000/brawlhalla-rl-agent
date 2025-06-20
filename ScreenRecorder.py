@@ -4,9 +4,10 @@ from collections import deque
 import mss
 import numpy as np
 import cv2
+from config import IMAGE_CHANNELS
 
 class ScreenRecorder:
-    def __init__(self, fps=30, region=None, buffer_size=30, render=False, monitor_id=1):
+    def __init__(self, fps=30, region=None, buffer_size=30, render=False, monitor_id=1, resolution = (1920, 1080), grayscale=False):
         self.region = region  # e.g., {"top": 0, "left": 0, "width": 1366, "height": 768}
         self.buffer = deque(maxlen=buffer_size)
         self.lock = threading.Lock()
@@ -15,6 +16,8 @@ class ScreenRecorder:
         self.fps = fps
         self.render = render
         self.monitor_id = monitor_id
+        self.resolution = resolution
+        self.grayscale = True if IMAGE_CHANNELS == 1 else False
 
     def start(self):
         self.running = True
@@ -35,14 +38,23 @@ class ScreenRecorder:
 
             while self.running:
                 start_time = time.monotonic()
-                frame = np.array(sct.grab(monitor))  # Returns BGRA image
+                frame = np.array(sct.grab(monitor))[:, :, :3]  # Returns BGR image after dropping alpha
+
                 with self.lock:
-                    self.buffer.append(frame[:, :, :3])  # Drop alpha
+                    self.buffer.append(frame)
 
                 if self.render:
                     display_width = int(disp_monitor['width'] * 0.3)
                     display_height = int(disp_monitor['height'] * 0.3)
-                    resized_frame = cv2.resize(frame[:, :, :3], (display_width, display_height))
+
+                    if self.grayscale:
+                        display_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+                    else:
+                        display_frame = frame
+
+                    resized_frame = cv2.resize(frame, (self.resolution)) # resize to set resolution
+                    resized_frame = cv2.resize(display_frame, (display_width, display_height)) # resize to display window
                     cv2.imshow("Live Recording", resized_frame)
                     if cv2.waitKey(1) & 0xFF == ord('q'):
                         self.running = False # Allow graceful exit from live view
