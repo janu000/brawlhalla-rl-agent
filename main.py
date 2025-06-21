@@ -1,24 +1,19 @@
-from stable_baselines3 import PPO
+from sb3_contrib import RecurrentPPO
 from stable_baselines3.common.callbacks import CheckpointCallback
-from stable_baselines3.common.policies import ActorCriticPolicy
 import time
 
 from BrawlhallaEnv import BrawlhallaEnv
-from FeatureExtractor import CNNWithActionEmbedding
+from Policy import ActionEmbeddingRecurrentPolicy
 from config import *
 
-class ActionEmbeddingPolicy(ActorCriticPolicy):
-    def __init__(self, observation_space, action_space, lr_schedule, **kwargs):
-        super().__init__(
-            observation_space,
-            action_space,
-            lr_schedule,
-            features_extractor_class=CNNWithActionEmbedding,
-            features_extractor_kwargs=dict(cnn_out_dim=256),
-            **kwargs,
-        )
-
 env = BrawlhallaEnv()
+
+policy_kwargs = dict(
+    n_lstm_layers=1,
+    lstm_hidden_size=LSTM_HIDDEN_SIZE,
+    shared_lstm=True,  # share between actor and critic
+    enable_critic_lstm=False    # Disable critic-only LSTM
+)
 
 checkpoint_callback = CheckpointCallback(
     save_freq=20_000,  # Save every N steps
@@ -26,15 +21,17 @@ checkpoint_callback = CheckpointCallback(
     name_prefix='ppo_brawlhalla'
 )
 
-model = PPO(
-    ActionEmbeddingPolicy,
-    env,
+model = RecurrentPPO(
+    policy=ActionEmbeddingRecurrentPolicy,
+    env=env,
     verbose=1,
     tensorboard_log="./ppo_brawlhalla_logs",
+    policy_kwargs=policy_kwargs,
     learning_rate=LEARNING_RATE,
     n_steps=N_STEPS,
     batch_size=BATCH_SIZE,
-    n_epochs=N_EPOCHS
+    n_epochs=N_EPOCHS,
+    use_sde=False,  # required for recurrent models
 )
 
 print("Enter Brawhalla within 2s")
@@ -42,16 +39,8 @@ time.sleep(2)
 print("Starting Training")
 
 try:
-    model.learn(total_timesteps=800_000, callback=checkpoint_callback)
+    model.learn(total_timesteps=2_000, callback=checkpoint_callback)
 except KeyboardInterrupt:
     print("\nTraining interrupted by user. Closing environment...")
 finally:
     env.close()
-
-obs, _ = model.env.reset()
-for _ in range(10):
-    action, _ = model.predict(obs)
-    print("Predicted action:", action)
-    obs, reward, terminated, truncated, _ = env.step(action)
-    if terminated:
-        obs = env.reset()

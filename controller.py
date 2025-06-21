@@ -1,9 +1,11 @@
 from pynput.keyboard import Controller, Key
+from pynput.mouse import Controller as MouseController, Button
+
 import time
-import threading
 from config import ACTION_LUT
 
 keyboard = Controller()
+mouse = MouseController()
 
 # Mapping for keys that need special handling (e.g., 'alt', 'ctrl', 'shift')
 SPECIAL_KEYS = {
@@ -38,7 +40,6 @@ for i, action_set in enumerate(ACTION_LUT):
                     mapped_keys.append(sub_action)
     ACTION_MAPPER[i] = mapped_keys
 
-print(ACTION_MAPPER)
 
 active_keys = set()
 
@@ -50,6 +51,7 @@ def press_keys(keys):
         if key is not None:
             keyboard.press(key)
             active_keys.add(key)
+            time.sleep(0.005)
 
 def release_keys(keys):
     global active_keys
@@ -59,18 +61,15 @@ def release_keys(keys):
         if key is not None:
             keyboard.release(key)
             active_keys.discard(key)  # discard avoids KeyError if key not in set
+            time.sleep(0.005)
 
 def get_active_keys():
     return list(active_keys)
 
+def release_all_keys():
+    release_keys(list(SPECIAL_KEYS.values()))
+
 def execute_action(action_idx, press_duration=0.05):
-    """
-    Executes a single action by pressing and releasing the corresponding keys.
-    This function is blocking.
-    Args:
-        action_idx (int): The index of the action from ACTION_LUT.
-        press_duration (float): How long to hold the key(s) down.
-    """
     keys_to_press = ACTION_MAPPER.get(action_idx, [])
 
     if keys_to_press:
@@ -79,6 +78,19 @@ def execute_action(action_idx, press_duration=0.05):
         release_keys(keys_to_press)
     elif action_idx == ACTION_LUT.index(['idle']):
         time.sleep(press_duration) # Still respect duration for idle
+
+def click_at(x, y, button=Button.left):
+    mouse.position = (x, y)
+    time.sleep(0.1)  # Small delay to ensure mouse moved
+    mouse.click(button)
+    time.sleep(0.005)
+
+def reset_o_health():
+    click_at(2676, 50) # open settings
+    time.sleep(0.2)
+    click_at(3647, 113) # open bot section
+    click_at(3670, 665) # set health
+    click_at(3523, 800) # confirm and close
 
 if __name__ == "__main__":
     print("Testing controller functions with ACTION_LUT...")

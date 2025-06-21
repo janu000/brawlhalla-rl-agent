@@ -25,7 +25,7 @@ class BrawlhallaEnv(gym.Env):
 
         self.observation_space = spaces.Dict({
             'image': spaces.Box(0, 255, (IMAGE_CHANNELS, IMAGE_HEIGHT, IMAGE_WIDTH), dtype=np.uint8),
-            'action_history': spaces.Box(low=0, high=NUM_ACTIONS - 1, shape=(HISTORY_LENGTH,), dtype=np.int64)
+            'last_executed_action': spaces.Box(low=0, high=NUM_ACTIONS - 1, shape=(1,), dtype=np.int64) # use 1d box instead of discrete space to prevent one-hot encoding
         })
 
         self.action_space = spaces.Discrete(NUM_ACTIONS)
@@ -33,6 +33,18 @@ class BrawlhallaEnv(gym.Env):
         self.recorder = ScreenRecorder(fps=REC_FPS, region=None, buffer_size=10, render=False, resolution=(IMAGE_WIDTH, IMAGE_HEIGHT))
         self.recorder.start()
         time.sleep(.1)
+
+        # # Save an example image
+        # example_frame = self.recorder.get_latest_frame()
+        # if example_frame is not None:
+        #     resized_example_frame = cv2.resize(example_frame, (IMAGE_WIDTH, IMAGE_HEIGHT))
+        #     if IMAGE_CHANNELS == 1:
+        #         processed_frame = cv2.cvtColor(resized_example_frame, cv2.COLOR_BGR2GRAY)
+        #         cv2.imwrite("example_image.png", processed_frame)
+        #     else:
+        #         cv2.imwrite("example_image.png", resized_example_frame)
+        # else:
+        #     print("Warning: Could not capture an example frame to save.")
 
         atexit.register(self.close)
 
@@ -42,22 +54,29 @@ class BrawlhallaEnv(gym.Env):
         self.opponent_healthtracker = HealthTracker(dmg_color_lut=DMG_COLOR_LUT)
 
         self.last_death_time = 0
+        self.last_keys_pressed = set()
 
     def close(self):
         if self.recorder is not None:
             self.recorder.stop()
-            controller.release_keys(controller.get_active_keys())
+            controller.release_all_keys()
             cv2.destroyAllWindows()
 
     def reset(self, seed=0):
         # Reset game or restart episode
-        obs = self._get_obs()
+        controller.release_all_keys()
+        print("Reset env")
+        time.sleep(.5) # wait for respawn
+        controller.reset_o_health()
+        time.sleep(4) # wait for respawn
+        print("continue")
 
+        obs = self._get_obs(action_idx=5) # Pass a default action for reset (5 = idle)
         info = {}
         return obs, info
 
     def step(self, action_idx):
-
+       
         self.perform_action(action_idx)
 
         # Enforce LEARNING_FPS to keep a consistent fps during training since we dont have full control over the environment
@@ -75,16 +94,18 @@ class BrawlhallaEnv(gym.Env):
         self.step_time = current_time
 
         # Read next observation
-        obs = self._get_obs()
+        obs = self._get_obs(action_idx)
 
         reward = self._compute_reward(action_idx)
-        terminated = self.check_done()
+        terminated = (reward <= -0.8)
         truncated = False
-        info = {}       
+        info = {}
 
         return obs, reward, terminated, truncated, info
 
-    def _get_obs(self):
+    def _get_obs(self, action_idx):
+
+        
     
         frame = self.recorder.get_latest_frame()
         resized_frame = cv2.resize(frame, (IMAGE_WIDTH, IMAGE_HEIGHT))
@@ -101,21 +122,21 @@ class BrawlhallaEnv(gym.Env):
                 f"Image shape mismatch. Expected {expected_shape}, but got {image.shape}"
             )
 
-        action_history = np.random.randint(0, NUM_ACTIONS, size=(HISTORY_LENGTH,), dtype=np.int64)
-        return {"image": image, "action_history": action_history}
+        return {"image": image, "last_executed_action": np.array([action_idx], dtype=np.int64)}
 
     def perform_action(self, action_idx):
-        keys_to_press = controller.ACTION_MAPPER.get(action_idx, [])
-        active_keys = set(controller.get_active_keys())
+        keys_to_press = set(controller.ACTION_MAPPER.get(action_idx, []))
 
-        keys_to_press_set = set(keys_to_press)
-
-        # Release keys that are currently active but not needed anymore
-        keys_to_release = active_keys - keys_to_press_set
+        # Determine which keys to release (keys that were pressed but are not in the current action)
+        keys_to_release = self.last_keys_pressed - keys_to_press
         controller.release_keys(list(keys_to_release))
 
-        # Press new keys
-        controller.press_keys(keys_to_press)
+        # Determine which keys to press (keys in the current action that were not previously pressed)
+        keys_to_actually_press = keys_to_press - self.last_keys_pressed
+        controller.press_keys(list(keys_to_actually_press))
+
+        # Update the set of last pressed keys
+        self.last_keys_pressed = keys_to_press
 
     def _compute_reward(self, action_idx):
         frame = self.recorder.get_latest_frame()
@@ -145,12 +166,15 @@ class BrawlhallaEnv(gym.Env):
         if p_died:
             r -= 1
         
-        r += o_damage / 100 - p_damage / 100
+        r += o_damage / 50 - p_damage / 50
 
-        attacking_actions = set([7,8,12,13,15,16,20,21]) # all action_idx that are attacks (see ACTION_LUT in config)
-        # if attack missed
-        if action_idx in attacking_actions and o_damage == 0:
-            r -= 0.01
+        attacking_actions = set([7,8,12,13,16,17,21,22]) # all action_idx that are attacks (see ACTION_LUT in config)
+        movement_actions = set([0,1,2,3,4,10,11,19,20]) # all action_idx that are movement only
+        if action_idx in movement_actions:
+            r += 0.04
+            
+        elif action_idx in attacking_actions and o_damage == 0: # if attack missed
+            r -= 0.04
 
         return r
 
@@ -222,4 +246,4 @@ class HealthTracker:
         h, s, v = hsv
 
         # Red is around 0-10 and 160-180 in hue
-        return (h <= 10 or h >= 160) and s >= 50 and v >= 50
+        return (h <= 10 or h >= 160) and s >= 10 and v >= 100-0.5*s-25
