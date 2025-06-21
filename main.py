@@ -6,13 +6,17 @@ from BrawlhallaEnv import BrawlhallaEnv
 from Policy import ActionEmbeddingRecurrentPolicy
 from config import *
 
-env = BrawlhallaEnv()
+env = BrawlhallaEnv(img_shape=(IMAGE_CHANNELS, IMAGE_HEIGHT, IMAGE_WIDTH))
 
 policy_kwargs = dict(
     n_lstm_layers=1,
     lstm_hidden_size=LSTM_HIDDEN_SIZE,
     shared_lstm=True,  # share between actor and critic
-    enable_critic_lstm=False    # Disable critic-only LSTM
+    enable_critic_lstm=False,    # Disable critic-only LSTM
+    features_extractor_kwargs=dict(
+        out_dim=128,
+        num_actions=env.num_actions,
+    ),
 )
 
 checkpoint_callback = CheckpointCallback(
@@ -39,7 +43,7 @@ time.sleep(2)
 print("Starting Training")
 
 try:
-    model.learn(total_timesteps=2_000, callback=checkpoint_callback)
+    model.learn(total_timesteps=40_000, callback=checkpoint_callback)
 except KeyboardInterrupt:
     print("\nTraining interrupted by user. Closing environment...")
 finally:

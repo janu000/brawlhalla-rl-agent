@@ -12,13 +12,12 @@ class ActionEmbeddingRecurrentPolicy(RecurrentActorCriticPolicy):
             action_space,
             lr_schedule,
             features_extractor_class=CNNWithActionEmbedding,
-            features_extractor_kwargs=dict(out_dim=128),
             **kwargs,
         )
 
        
 class CNNWithActionEmbedding(BaseFeaturesExtractor):
-    def __init__(self, observation_space, out_dim=128):
+    def __init__(self, observation_space, out_dim=128, num_actions=1):
         super().__init__(observation_space, features_dim=1)  # temp
 
         self.cnn = nn.Sequential(
@@ -54,7 +53,7 @@ class CNNWithActionEmbedding(BaseFeaturesExtractor):
         )
 
         # Action embedding
-        self.action_embedding = nn.Embedding(NUM_ACTIONS, EMBED_DIM)
+        self.action_embedding = nn.Embedding(num_actions, EMBED_DIM)
 
         self.final_dim = out_dim
         self._features_dim = self.final_dim

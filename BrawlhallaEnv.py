@@ -7,7 +7,7 @@ import atexit
 
 from config import *
 from ScreenRecorder import ScreenRecorder
-import controller
+from BrawlhallaController import BrawlhallaController
 
 DMG_COLOR_LUT = []
 with open("healthcolors.txt", 'r') as f:
@@ -20,25 +20,29 @@ with open("healthcolors.txt", 'r') as f:
                 DMG_COLOR_LUT.append(tuple(parts))
 
 class BrawlhallaEnv(gym.Env):
-    def __init__(self):
+    def __init__(self, img_shape=(3,1080,1920)):
         super().__init__()
 
+        self.controller = BrawlhallaController()
+        self.img_shape = img_shape
+        self.num_actions = len(self.controller.ACTION_LUT)
+
         self.observation_space = spaces.Dict({
-            'image': spaces.Box(0, 255, (IMAGE_CHANNELS, IMAGE_HEIGHT, IMAGE_WIDTH), dtype=np.uint8),
-            'last_executed_action': spaces.Box(low=0, high=NUM_ACTIONS - 1, shape=(1,), dtype=np.int64) # use 1d box instead of discrete space to prevent one-hot encoding
+            'image': spaces.Box(0, 255, img_shape, dtype=np.uint8),
+            'last_executed_action': spaces.Box(low=0, high=self.num_actions - 1, shape=(1,), dtype=np.int64) # use 1d box instead of discrete space to prevent one-hot encoding
         })
 
-        self.action_space = spaces.Discrete(NUM_ACTIONS)
+        self.action_space = spaces.Discrete(self.num_actions)
 
-        self.recorder = ScreenRecorder(fps=REC_FPS, region=None, buffer_size=8, render=False, monitor_id=GAME_MONITOR_ID, resolution=(IMAGE_WIDTH, IMAGE_HEIGHT))
+        self.recorder = ScreenRecorder(fps=REC_FPS, region=None, buffer_size=8, render=False, monitor_id=GAME_MONITOR_ID, resolution=(img_shape[2], img_shape[1]))
         self.recorder.start()
         time.sleep(.1)
 
         # Save an example image
         example_frame = self.recorder.get_latest_frame()
         if example_frame is not None:
-            resized_example_frame = cv2.resize(example_frame, (IMAGE_WIDTH, IMAGE_HEIGHT))
-            if IMAGE_CHANNELS == 1:
+            resized_example_frame = cv2.resize(example_frame, (img_shape[2], img_shape[1]))
+            if img_shape[0] == 1:
                 processed_frame = cv2.cvtColor(resized_example_frame, cv2.COLOR_BGR2GRAY)
                 cv2.imwrite("example_image.png", processed_frame)
             else:
@@ -54,24 +58,22 @@ class BrawlhallaEnv(gym.Env):
         self.opponent_healthtracker = HealthTracker(dmg_color_lut=DMG_COLOR_LUT)
 
         self.last_death_time = 0
-        self.last_keys_pressed = set()
 
     def close(self):
         if self.recorder is not None:
             self.recorder.stop()
-            controller.release_all_keys()
+            self.controller.release_all_keys()
             cv2.destroyAllWindows()
 
     def reset(self, seed=0):
         # Reset game or restart episode
-        controller.release_all_keys()
-        print("Reset env")
-        time.sleep(.5) # wait for respawn
-        controller.reset_o_health()
         time.sleep(4) # wait for respawn
-        print("continue")
+        self.controller.release_all_keys()
+        print(self.controller.pressed_keys)
+        self.controller.reset_o_health()
+        time.sleep(0.5) 
 
-        obs = self._get_obs(action_idx=5) # Pass a default action for reset (5 = idle)
+        obs = self._get_obs(action_idx=5) # Pass default action for reset (5 = idle)
         info = {}
         return obs, info
 
@@ -108,35 +110,29 @@ class BrawlhallaEnv(gym.Env):
         
     
         frame = self.recorder.get_latest_frame()
-        resized_frame = cv2.resize(frame, (IMAGE_WIDTH, IMAGE_HEIGHT))
+        resized_frame = cv2.resize(frame, (self.img_shape[2], self.img_shape[1]))
 
-        if IMAGE_CHANNELS == 1: 
+        if self.img_shape[0] == 1: 
             image = cv2.cvtColor(resized_frame, cv2.COLOR_BGR2GRAY)[np.newaxis, :, :]
         else:
             transposed_frame = np.transpose(resized_frame, (2, 0, 1))
             image = transposed_frame
 
-        expected_shape = (IMAGE_CHANNELS, IMAGE_HEIGHT, IMAGE_WIDTH)
-        if image.shape != expected_shape:
+        if image.shape != self.img_shape:
             raise ValueError(
-                f"Image shape mismatch. Expected {expected_shape}, but got {image.shape}"
+                f"Image shape mismatch. Expected {self.img_shape}, but got {image.shape}"
             )
 
         return {"image": image, "last_executed_action": np.array([action_idx], dtype=np.int64)}
 
     def perform_action(self, action_idx):
-        keys_to_press = set(controller.ACTION_MAPPER.get(action_idx, []))
+        keys_to_press = set(self.controller.ACTION_MAPPER.get(action_idx, []))
 
         # Determine which keys to release (keys that were pressed but are not in the current action)
-        keys_to_release = self.last_keys_pressed - keys_to_press
-        controller.release_keys(list(keys_to_release))
+        keys_to_release = self.controller.pressed_keys - keys_to_press
+        self.controller.release_keys(keys_to_release)
 
-        # Determine which keys to press (keys in the current action that were not previously pressed)
-        keys_to_actually_press = keys_to_press - self.last_keys_pressed
-        controller.press_keys(list(keys_to_actually_press))
-
-        # Update the set of last pressed keys
-        self.last_keys_pressed = keys_to_press
+        self.controller.press_keys(keys_to_press)
 
     def _compute_reward(self, action_idx):
         frame = self.recorder.get_latest_frame()
