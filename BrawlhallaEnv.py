@@ -30,21 +30,21 @@ class BrawlhallaEnv(gym.Env):
 
         self.action_space = spaces.Discrete(NUM_ACTIONS)
 
-        self.recorder = ScreenRecorder(fps=REC_FPS, region=None, buffer_size=10, render=False, resolution=(IMAGE_WIDTH, IMAGE_HEIGHT))
+        self.recorder = ScreenRecorder(fps=REC_FPS, region=None, buffer_size=8, render=False, monitor_id=GAME_MONITOR_ID, resolution=(IMAGE_WIDTH, IMAGE_HEIGHT))
         self.recorder.start()
         time.sleep(.1)
 
-        # # Save an example image
-        # example_frame = self.recorder.get_latest_frame()
-        # if example_frame is not None:
-        #     resized_example_frame = cv2.resize(example_frame, (IMAGE_WIDTH, IMAGE_HEIGHT))
-        #     if IMAGE_CHANNELS == 1:
-        #         processed_frame = cv2.cvtColor(resized_example_frame, cv2.COLOR_BGR2GRAY)
-        #         cv2.imwrite("example_image.png", processed_frame)
-        #     else:
-        #         cv2.imwrite("example_image.png", resized_example_frame)
-        # else:
-        #     print("Warning: Could not capture an example frame to save.")
+        # Save an example image
+        example_frame = self.recorder.get_latest_frame()
+        if example_frame is not None:
+            resized_example_frame = cv2.resize(example_frame, (IMAGE_WIDTH, IMAGE_HEIGHT))
+            if IMAGE_CHANNELS == 1:
+                processed_frame = cv2.cvtColor(resized_example_frame, cv2.COLOR_BGR2GRAY)
+                cv2.imwrite("example_image.png", processed_frame)
+            else:
+                cv2.imwrite("example_image.png", resized_example_frame)
+        else:
+            print("Warning: Could not capture an example frame to save.")
 
         atexit.register(self.close)
 

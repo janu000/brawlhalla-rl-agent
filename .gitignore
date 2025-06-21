@@ -20,7 +20,7 @@ checkpoints/
 # Log files
 *.log
 ppo_brawlhalla_logs/
-temp/
+temp/blur.py
 
 # Data
 data/
@@ -35,6 +35,3 @@ Thumbs.db
 .idea/
 *.sublime-workspace
 *.sublime-project
-
-# Misc
-healthcolors.txt

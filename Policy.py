@@ -12,12 +12,11 @@ class ActionEmbeddingRecurrentPolicy(RecurrentActorCriticPolicy):
             action_space,
             lr_schedule,
             features_extractor_class=CNNWithActionEmbedding,
-            features_extractor_kwargs=dict(cnn_out_dim=256),
+            features_extractor_kwargs=dict(out_dim=128),
             **kwargs,
         )
 
        
-
 class CNNWithActionEmbedding(BaseFeaturesExtractor):
     def __init__(self, observation_space, out_dim=128):
         super().__init__(observation_space, features_dim=1)  # temp

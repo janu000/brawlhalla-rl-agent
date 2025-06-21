@@ -47,3 +47,4 @@ N_EPOCHS = 8           # Number of times to iterate over the collected data
 
 HEALTH1_POS = (100, 1774) # Note: y, x !
 HEALTH2_POS = (100, 1867) # Note: y, x !
+GAME_MONITOR_ID = 1
