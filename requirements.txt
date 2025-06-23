@@ -1,3 +1,10 @@
-mss
+torch
+numpy
 opencv-python
-pynput 
+gymnasium
+sb3-contrib
+stable-baselines3
+tqdm
+pynput
+mss
+tensorboard 
