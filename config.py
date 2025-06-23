@@ -6,8 +6,8 @@ config = {
     "EMBED_DIM": 16,
     "LEARNING_RATE": 3e-4,
     "REC_FPS": 60,
-    "LEARNING_FPS": 20, # steps per second of the agent (the actual game runs continuously). Training fps may differ due to respawn and policy update durations
-    "MAX_EPS_LEN": 1000,
+    "STEP_FPS": 20, # steps per second of the agent (the actual game runs continuously). Training fps may differ due to respawn and policy update durations
+    "MAX_EPS_LEN": 1024,
     "LSTM_HIDDEN_SIZE": 128,
 
     # PPO hyperparameters

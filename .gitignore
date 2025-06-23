@@ -20,12 +20,12 @@ checkpoints/
 # Log files
 *.log
 ppo_brawlhalla_logs/
-temp/blur.py
+training_logs/
 
 # Data
 data/
 example_image.png
-training_logs/
+
 
 # OS files
 .DS_Store
@@ -36,3 +36,6 @@ Thumbs.db
 .idea/
 *.sublime-workspace
 *.sublime-project
+
+# MISC
+temp/blur.py

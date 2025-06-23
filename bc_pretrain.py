@@ -1,17 +1,17 @@
-import torch
-from torch.utils.data import Dataset, DataLoader
-import torch.nn.functional as F
-from torch.distributions import Categorical
-
+"""
+Behavior Cloning Pretraining Script for Brawlhalla RL Agent
+Loads expert demonstration data, trains a recurrent policy using behavior cloning, and saves the pretrained model.
+"""
 import pickle
 import os
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 
+import torch
+from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard.writer import SummaryWriter
-
-from stable_baselines3.common.callbacks import CheckpointCallback
 from sb3_contrib import RecurrentPPO
-from Policy import ActionEmbeddingRecurrentPolicy
+from sb3_contrib.common.recurrent.policies import RecurrentActorCriticCnnPolicy
+from tqdm import tqdm
 
 from BrawlhallaEnv import BrawlhallaEnv
 from config import config
@@ -19,64 +19,51 @@ from config import config
 
 class ExpertEpisodeDataset(Dataset):
     def __init__(self, data_dir='data/'):
-        self.episodes = self._load_all_episodes(data_dir)
-        if not self.episodes:
-            raise ValueError(f"No expert episodes found in {data_dir}")
-
-    def _load_all_episodes(self, data_dir):
-        episodes_list = []
-        episode_files = []
-
+        self.episode_files = []
         for filename in os.listdir(data_dir):
             if filename.startswith('expert_episode_') and filename.endswith('.pkl'):
                 try:
                     episode_num = int(filename.split('_')[2].split('.')[0])
-                    episode_files.append((episode_num, os.path.join(data_dir, filename)))
+                    self.episode_files.append((episode_num, os.path.join(data_dir, filename)))
                 except ValueError:
                     print(f"Warning: Skipping malformed episode file: {filename}")
-                    continue
-        
-        episode_files.sort()
-
-        for episode_num, filepath in episode_files:
-            try:
-                with open(filepath, 'rb') as f:
-                    episode_data = pickle.load(f)
-                    episodes_list.append(episode_data)
-            except Exception as e:
-                print(f"Error loading episode from {filepath}: {e}")
-                continue
-        return episodes_list
+        self.episode_files.sort()
 
     def __len__(self):
-        return len(self.episodes)
+        return len(self.episode_files)
 
     def __getitem__(self, idx):
-        # Returns a single episode dictionary
-        episode = self.episodes[idx]
-        
-        # Convert NumPy arrays to PyTorch tensors
-        image_tensor = torch.from_numpy(episode["obs"]["image"]).float() # Images are usually float for models
-        last_executed_action_tensor = torch.from_numpy(episode["obs"]["last_executed_action"]).long() # Action indices are long
+        _, filepath = self.episode_files[idx]
+        with open(filepath, 'rb') as f:
+            episode = pickle.load(f)
+        image_tensor = torch.from_numpy(episode["obs"]).float()
         actions_tensor = torch.from_numpy(episode["actions"]).long()
         dones_tensor = torch.from_numpy(episode["dones"]).bool()
-
         return {
-            "obs": {
-                "image": image_tensor,
-                "last_executed_action": last_executed_action_tensor
-            },
+            "obs": image_tensor,
             "actions": actions_tensor,
             "dones": dones_tensor
         }
 
 def collate_fn(batch):
-    # batch is a list of dictionaries, each representing an episode
-
-    max_T = max(episode["actions"].shape[0] for episode in batch)
-
+    """
+    Collate function for batching variable-length episodes with padding.
+    """
+    lengths = [episode["actions"].shape[0] for episode in batch]
+    if all(l == lengths[0] for l in lengths):
+        # All episodes have the same length, no need to pad
+        images = torch.stack([episode["obs"] for episode in batch])
+        actions = torch.stack([episode["actions"] for episode in batch])
+        dones = torch.stack([episode["dones"] for episode in batch])
+        return {
+            "obs": images,
+            "actions": actions,
+            "dones": dones
+        }
+    
+    # Otherwise, pad as before
+    max_T = max(lengths)
     batched_images = []
-    batched_last_executed_actions = []
     batched_actions = []
     batched_dones = []
     
@@ -84,16 +71,10 @@ def collate_fn(batch):
         T = episode["actions"].shape[0]
 
         # Padding images
-        image = episode["obs"]["image"]
+        image = episode["obs"]
         padded_image = torch.zeros(max_T, *image.shape[1:], dtype=image.dtype)
         padded_image[:T] = image
         batched_images.append(padded_image)
-
-        # Padding last_executed_action
-        last_executed_action = episode["obs"]["last_executed_action"]
-        padded_last_executed_action = torch.zeros(max_T, *last_executed_action.shape[1:], dtype=last_executed_action.dtype)
-        padded_last_executed_action[:T] = last_executed_action
-        batched_last_executed_actions.append(padded_last_executed_action)
 
         # Padding actions
         actions = episode["actions"]
@@ -108,19 +89,18 @@ def collate_fn(batch):
         batched_dones.append(padded_dones)
 
     return {
-        "obs": {
-            "image": torch.stack(batched_images),
-            "last_executed_action": torch.stack(batched_last_executed_actions)
-        },
+        "obs": torch.stack(batched_images),
         "actions": torch.stack(batched_actions),
         "dones": torch.stack(batched_dones)
     }
 
 def create_valid_mask(dones):
     """
-    dones: [B, T] tensor of 0/1 indicating episode ends.
-
-    Returns mask: [B, T], 1 for valid timesteps, 0 for padding/after-done.
+    Create a mask for valid (non-padding, non-after-done) timesteps in a batch.
+    Args:
+        dones: [B, T] tensor of 0/1 indicating episode ends.
+    Returns:
+        mask: [B, T], 1 for valid timesteps, 0 for padding/after-done.
     """
     B, T = dones.shape
     device = dones.device
@@ -137,56 +117,82 @@ def create_valid_mask(dones):
     
     return mask
 
-def train_recurrent_bc(model, dataloader, epochs=10, lr=1e-4):
+def initial_state(self, batch_size: int):
+    """
+    Initialises the LSTM hidden and cell states.
+    """
+    lstm_hidden_size = self.lstm_hidden_state_shape[-1] 
+    n_lstm_layers = self.lstm_hidden_state_shape[0]
+
+    hidden_state = torch.zeros(n_lstm_layers, batch_size, lstm_hidden_size, device=self.device)
+    cell_state = torch.zeros(n_lstm_layers, batch_size, lstm_hidden_size, device=self.device)
+    
+    return (hidden_state, cell_state)
+
+RecurrentActorCriticCnnPolicy.initial_state = initial_state
+
+def train_recurrent_bc(model, dataloader, epochs=10, lr=1e-4, alpha=1e-2, writer=None, checkpoint_dir=None, checkpoint_freq=None):
+    """
+    Train a recurrent policy using behavior cloning on expert data.
+    Logs loss to TensorBoard and saves checkpoints periodically.
+    """
     model.policy.train()
     device = model.device
     optimizer = torch.optim.Adam(model.policy.parameters(), lr=lr)
 
-    writer = SummaryWriter(log_dir="./runs/bc_pretrain")
-
+    global_step = 0
     for epoch in range(epochs):
         epoch_loss = 0.0
 
-        for batch_idx, batch in enumerate(dataloader):
-            obs_batch = {k: v.to(device) for k, v in batch["obs"].items()}
-            action_batch = batch["actions"].to(device)      # [B, T]
-            done_batch = batch["dones"].to(device)          # [B, T], bool or int
+        for batch in tqdm(dataloader, desc=f"Epoch {epoch+1} Batches"):
+            obs_batch = batch["obs"].to(device)
+            action_batch = batch["actions"].to(device)
+            done_batch = batch["dones"].to(device)
 
             B, T = action_batch.shape
-            
-            # Initial episode_starts for t=0: all episodes are starting
-            episode_starts = torch.ones(B, dtype=torch.float, device=device)
-            
-            # Get the full RNNStates namedtuple, then extract the actor's (h,c) tuple for the forward pass
-            lstm_states = model.policy.initial_state(batch_size=B)
-            
-            # Create valid mask for padded timesteps and timesteps after episode end
-            valid_mask = create_valid_mask(done_batch)  # [B, T], float
 
+            episode_starts = torch.ones(B, dtype=torch.float, device=device)
+            lstm_states = model.policy.initial_state(batch_size=B)
+            prev_action = torch.zeros(B, dtype=torch.float, device=device)
+
+            valid_mask = create_valid_mask(done_batch)
+            total_log_loss = 0.0
+            total_entropy_loss = 0.0
             total_loss = 0.0
+
             for t in range(T):
-                obs_t = {k: v[:, t] for k, v in obs_batch.items()}  # [B, ...]
-                action_t = action_batch[:, t]                         # [B]
-                done_t = done_batch[:, t].float()                     # [B]
+                obs_t = obs_batch[:, t]
+                action_t = action_batch[:, t]
+                done_t = done_batch[:, t].float()
 
                 # forward pass
                 action_dist, lstm_states = model.policy.get_distribution(obs_t, lstm_states, episode_starts)
 
-                # calculate log prob
                 log_prob = action_dist.log_prob(action_t)
+                entropy = action_dist.entropy()
 
-                # Calculate loss for this timestep and apply valid mask
-                step_loss = -log_prob
-                step_loss *= valid_mask[:, t]
+                # reduce importancy of holding a key vs pressing a key
+                action_held_weight = 1 - (action_t == prev_action).float() * 0.9
 
-                # Accumulate loss
-                total_loss += step_loss.sum() # Sum across batch
+                step_log_loss = -log_prob * valid_mask[:, t]
+                step_entropy_loss = -entropy * valid_mask[:, t]
+                step_loss = action_held_weight * step_log_loss + alpha * step_entropy_loss
+
+                total_log_loss += step_log_loss.sum()
+                total_entropy_loss += step_entropy_loss.sum()
+                total_loss += step_loss.sum()
+
 
                 # Update episode_starts for done episodes: 0 for done, 1 for not done
                 episode_starts = (1.0 - done_t)
+                prev_action = action_t
 
-            # Average the total loss by the number of valid elements in the batch
+                global_step += B
+                
             total_valid = valid_mask.sum()
+
+            avg_log_loss = total_log_loss / total_valid if total_valid > 0 else torch.tensor(0.0, device=device)
+            avg_entropy_loss = total_entropy_loss / total_valid if total_valid > 0 else torch.tensor(0.0, device=device)
             final_loss = total_loss / total_valid if total_valid > 0 else torch.tensor(0.0, device=device)
 
             optimizer.zero_grad()
@@ -197,50 +203,46 @@ def train_recurrent_bc(model, dataloader, epochs=10, lr=1e-4):
 
             # Log to TensorBoard
             if writer:
-                global_step = epoch * len(dataloader) + batch_idx
-                writer.add_scalar("BC_Loss/train", final_loss.item(), global_step)
+                writer.add_scalar("BC_Loss/train", final_loss.item(), global_step + 1)
+                writer.add_scalar("LogLikelihood_Loss/train", avg_log_loss.item(), global_step + 1)
+                writer.add_scalar("Entropy_Loss/train", avg_entropy_loss.item(), global_step + 1)
+
+        # Checkpoint saving
+        if checkpoint_dir and checkpoint_freq and (epoch + 1) % checkpoint_freq == 0:
+            checkpoint_path = os.path.join(checkpoint_dir, f"bc_pretrain_step_{global_step}.zip")
+            model.save(checkpoint_path)
+            print(f"[Checkpoint] Saved model at step {global_step} to {checkpoint_path}")
 
         print(f"[Epoch {epoch + 1}] Avg Loss: {epoch_loss / len(dataloader):.6f}")
     
-    writer.close()
+    if writer:
+        writer.close()
 
 if __name__ == "__main__":
-
+    """
+    Main entry point: loads expert data, sets up environment/model, and runs BC training.
+    """
     dataset = ExpertEpisodeDataset(data_dir='data/')
+    print(f"Loaded {len(dataset)} episodes.")
+
     dataloader = DataLoader(
         dataset,
-        batch_size=1,
+        batch_size=4,
         shuffle=True,
         collate_fn=collate_fn
     )
 
-    print(f"Loaded {len(dataset)} episodes.")
-    print(f"Total frames across all episodes: {sum(e['actions'].shape[0] for e in dataset.episodes)}")
-
-
     env = BrawlhallaEnv(config=config)
-    env.observe_only = True
 
     policy_kwargs = dict(
         n_lstm_layers=1,
         lstm_hidden_size=config["LSTM_HIDDEN_SIZE"],
         shared_lstm=True,  # share between actor and critic
-        enable_critic_lstm=False,    # Disable critic-only LSTM
-        features_extractor_kwargs=dict(
-            num_actions=env.num_actions,
-            in_channel=env.img_shape[0],
-            act_emb_dim=config["EMBED_DIM"],
-        ),
-    )
-
-    checkpoint_callback = CheckpointCallback(
-    save_freq=20_000,  # Save every N steps
-    save_path='./checkpoints/',
-    name_prefix='ppo_brawlhalla'
+        enable_critic_lstm=False,    # Disable critic-only LSTM,
     )
 
     model = RecurrentPPO(
-        policy=ActionEmbeddingRecurrentPolicy,
+        policy=RecurrentActorCriticCnnPolicy,
         env=env,
         verbose=1,
         tensorboard_log="./ppo_brawlhalla_logs",
@@ -254,8 +256,12 @@ if __name__ == "__main__":
 
     try:
         # Train using behavior cloning on expert data
-        train_recurrent_bc(model, dataloader, epochs=10, lr=1e-4)
-        
+        train_recurrent_bc(
+            model, dataloader, epochs=2, lr=1e-4, alpha=1e-2,
+            writer=SummaryWriter(log_dir="./training_logs/bc_pretrain"),
+            checkpoint_dir="./checkpoints/",
+            checkpoint_freq=10 # in epochs
+        )
         model.save("checkpoints/bc_pretrained_model")
 
     except KeyboardInterrupt:

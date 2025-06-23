@@ -5,12 +5,11 @@ import time
 import cv2
 import atexit
 
-from config import config
 from ScreenRecorder import ScreenRecorder
 from BrawlhallaController import BrawlhallaController
 
 DMG_COLOR_LUT = []
-with open("healthcolors.txt", 'r') as f:
+with open("utils/healthcolors.txt", 'r') as f:
     for line in f:
         # Remove brackets and split into integers
         line = line.strip().replace('[', '').replace(']', '')
@@ -18,7 +17,7 @@ with open("healthcolors.txt", 'r') as f:
             parts = list(map(int, line.split()))
             if len(parts) == 3:
                 DMG_COLOR_LUT.append(tuple(parts))
-
+                
 class BrawlhallaEnv(gym.Env):
     def __init__(self, config: dict):
         super().__init__()
@@ -28,18 +27,15 @@ class BrawlhallaEnv(gym.Env):
         self.num_actions = len(self.controller.ACTION_LUT)
         self.max_eps_len = config["MAX_EPS_LEN"]
 
-        self.observation_space = spaces.Dict({
-            'image': spaces.Box(0, 255, self.img_shape, dtype=np.uint8),
-            'last_executed_action': spaces.Box(low=0, high=self.num_actions - 1, shape=(1,), dtype=np.int64) # use 1d box instead of discrete space to prevent one-hot encoding
-        })
+        self.observation_space = spaces.Box(0, 255, self.img_shape, dtype=np.uint8)
 
         self.action_space = spaces.Discrete(self.num_actions)
         
-        self.learning_fps = config["LEARNING_FPS"]
+        self.step_duration = 1 / config["STEP_FPS"]
         self.observe_only = False
 
-        self.p_health_pos = config["HEALTH_POS2"]
-        self.o_health_pos = config["HEALTH_POS1"]
+        self.p_health_pos = config["HEALTH_POS1"]
+        self.o_health_pos = config["HEALTH_POS2"]
 
         self.player_healthtracker = HealthTracker(dmg_color_lut=DMG_COLOR_LUT)
         self.opponent_healthtracker = HealthTracker(dmg_color_lut=DMG_COLOR_LUT)
@@ -77,7 +73,7 @@ class BrawlhallaEnv(gym.Env):
         time.sleep(3)
         print("continue")
 
-        obs = self._get_obs(action_idx=5) # Pass default action (5 = idle)
+        obs = self._get_obs()
         info = {}
         return obs, info
 
@@ -87,20 +83,15 @@ class BrawlhallaEnv(gym.Env):
         if not self.observe_only:
             self.perform_action(action_idx)
 
-        # Enforce LEARNING_FPS to keep a consistent fps during training since we dont have full control over the environment
-        current_time = time.monotonic()
-        
-        time_per_frame = 1.0 / self.learning_fps
-        elapsed_time = current_time - self.step_timer
-        sleep_duration = time_per_frame - elapsed_time
-
+        # Enforce STEP_FPS to keep a consistent step fps since we dont have full control over the continous environment
+        elapsed_time = time.monotonic() - self.step_timer
+        sleep_duration = self.step_duration - elapsed_time
         if sleep_duration > 0:
             time.sleep(sleep_duration)
-
-        self.step_timer = current_time
+        self.step_timer = time.monotonic()
 
         # Read next observation
-        obs = self._get_obs(action_idx)
+        obs = self._get_obs()
 
         reward = self._compute_reward(action_idx)
         terminated = (reward <= -0.8) or (self.step_counter >= self.max_eps_len)
@@ -111,13 +102,8 @@ class BrawlhallaEnv(gym.Env):
 
         return obs, reward, terminated, truncated, info
 
-    def _get_obs(self, action_idx):
+    def _get_obs(self):
 
-        if not isinstance(action_idx, (int, np.integer)):
-            raise TypeError(f"Expected action_idx to be an int or np.integer, but got {type(action_idx).__name__}")
-
-        action_idx = np.int64(action_idx)
-    
         frame = self.recorder.get_latest_frame()
         resized_frame = cv2.resize(frame, (self.img_shape[2], self.img_shape[1]))
 
@@ -131,8 +117,7 @@ class BrawlhallaEnv(gym.Env):
             raise ValueError(
                 f"Image shape mismatch. Expected {self.img_shape}, but got {image.shape}"
             )
-
-        return {"image": image, "last_executed_action": action_idx}
+        return image
 
     def perform_action(self, action_idx):
         self.controller.execute_action(action_idx)
