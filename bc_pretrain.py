@@ -18,24 +18,84 @@ from config import config
 
 
 class ExpertEpisodeDataset(Dataset):
-    def __init__(self, data_dir='data/'):
-        self.episode_files = []
+    """
+    PyTorch Dataset for loading expert demonstration episodes from disk.
+    Each item is a full episode (sequence of images, actions, and dones).
+    Supports both lazy loading and pre-loading all data into memory.
+    """
+    def __init__(self, data_dir='data/', lazy_loading=True):
+        self.lazy_loading = lazy_loading
+        if lazy_loading:
+            self.episode_files = []
+            for filename in os.listdir(data_dir):
+                if filename.startswith('expert_episode_') and filename.endswith('.pkl'):
+                    try:
+                        episode_num = int(filename.split('_')[2].split('.')[0])
+                        self.episode_files.append((episode_num, os.path.join(data_dir, filename)))
+                    except ValueError:
+                        print(f"Warning: Skipping malformed episode file: {filename}")
+                        continue
+            self.episode_files.sort()
+        else:
+            self.episodes = self._load_all_episodes(data_dir)
+            if not self.episodes:
+                raise ValueError(f"No expert episodes found in {data_dir}")
+
+    def _load_all_episodes(self, data_dir):
+        episodes_list = []
+        episode_files = []
         for filename in os.listdir(data_dir):
             if filename.startswith('expert_episode_') and filename.endswith('.pkl'):
                 try:
                     episode_num = int(filename.split('_')[2].split('.')[0])
-                    self.episode_files.append((episode_num, os.path.join(data_dir, filename)))
+                    episode_files.append((episode_num, os.path.join(data_dir, filename)))
                 except ValueError:
                     print(f"Warning: Skipping malformed episode file: {filename}")
-        self.episode_files.sort()
+                    continue
+        episode_files.sort()
+        for episode_num, filepath in episode_files:
+            try:
+                with open(filepath, 'rb') as f:
+                    episode_data = pickle.load(f)
+                    episodes_list.append(episode_data)
+            except Exception as e:
+                print(f"Error loading episode from {filepath}: {e}")
+                continue
+        return episodes_list
 
     def __len__(self):
-        return len(self.episode_files)
+        if self.lazy_loading:
+            return len(self.episode_files)
+        else:
+            return len(self.episodes)
 
     def __getitem__(self, idx):
+        if self.lazy_loading:
+            return self._getitem_lazy(idx)
+        else:
+            return self._getitem_preloaded(idx)
+
+    def _getitem_lazy(self, idx):
+        """
+        Load episode from disk on demand (lazy loading).
+        """
         _, filepath = self.episode_files[idx]
         with open(filepath, 'rb') as f:
             episode = pickle.load(f)
+        image_tensor = torch.from_numpy(episode["obs"]).float()
+        actions_tensor = torch.from_numpy(episode["actions"]).long()
+        dones_tensor = torch.from_numpy(episode["dones"]).bool()
+        return {
+            "obs": image_tensor,
+            "actions": actions_tensor,
+            "dones": dones_tensor
+        }
+
+    def _getitem_preloaded(self, idx):
+        """
+        Return episode from pre-loaded data in memory.
+        """
+        episode = self.episodes[idx]
         image_tensor = torch.from_numpy(episode["obs"]).float()
         actions_tensor = torch.from_numpy(episode["actions"]).long()
         dones_tensor = torch.from_numpy(episode["dones"]).bool()
@@ -222,12 +282,12 @@ if __name__ == "__main__":
     """
     Main entry point: loads expert data, sets up environment/model, and runs BC training.
     """
-    dataset = ExpertEpisodeDataset(data_dir='data/')
+    dataset = ExpertEpisodeDataset(data_dir='data/', lazy_loading=False)
     print(f"Loaded {len(dataset)} episodes.")
 
     dataloader = DataLoader(
         dataset,
-        batch_size=4,
+        batch_size=1,
         shuffle=True,
         collate_fn=collate_fn
     )
