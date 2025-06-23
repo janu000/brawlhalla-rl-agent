@@ -111,7 +111,7 @@ class DataViewer:
             print(f"Warning: Unexpected image shape {img.shape} at index {self.current_idx}")
             return
 
-        display_img = cv2.resize(display_img, (1920, 1080))
+        display_img = cv2.resize(display_img, (1280, 720))
         current_action_name = self.controller.ACTION_LUT[current_action_idx]
 
         text_lines = [

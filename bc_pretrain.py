@@ -232,7 +232,7 @@ if __name__ == "__main__":
         collate_fn=collate_fn
     )
 
-    env = BrawlhallaEnv(config=config)
+    env = BrawlhallaEnv(config=config, observe_only=True)
 
     policy_kwargs = dict(
         n_lstm_layers=1,

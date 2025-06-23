@@ -4,9 +4,14 @@ import numpy as np
 import time
 import cv2
 import atexit
+import os
 
-from ScreenRecorder import ScreenRecorder
-from BrawlhallaController import BrawlhallaController
+if not os.environ.get("COLAB"):
+    from ScreenRecorder import ScreenRecorder
+    from BrawlhallaController import BrawlhallaController
+else:
+    from Dummies import BrawlhallaController, ScreenRecorder
+
 
 DMG_COLOR_LUT = []
 with open("utils/healthcolors.txt", 'r') as f:
@@ -17,12 +22,13 @@ with open("utils/healthcolors.txt", 'r') as f:
             parts = list(map(int, line.split()))
             if len(parts) == 3:
                 DMG_COLOR_LUT.append(tuple(parts))
-                
+
 class BrawlhallaEnv(gym.Env):
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, observe_only=False):
         super().__init__()
 
         self.controller = BrawlhallaController()
+
         self.img_shape = config["IMAGE_CHANNELS"], config["IMAGE_WIDTH"], config["IMAGE_HEIGHT"]
         self.num_actions = len(self.controller.ACTION_LUT)
         self.max_eps_len = config["MAX_EPS_LEN"]
@@ -32,7 +38,7 @@ class BrawlhallaEnv(gym.Env):
         self.action_space = spaces.Discrete(self.num_actions)
         
         self.step_duration = 1 / config["STEP_FPS"]
-        self.observe_only = False
+        self.observe_only = observe_only
 
         self.p_health_pos = config["HEALTH_POS1"]
         self.o_health_pos = config["HEALTH_POS2"]
