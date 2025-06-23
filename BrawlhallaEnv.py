@@ -6,12 +6,6 @@ import cv2
 import atexit
 import os
 
-if not os.environ.get("COLAB"):
-    from ScreenRecorder import ScreenRecorder
-    from BrawlhallaController import BrawlhallaController
-else:
-    from Dummies import BrawlhallaController, ScreenRecorder
-
 
 DMG_COLOR_LUT = []
 with open("utils/healthcolors.txt", 'r') as f:
@@ -26,6 +20,12 @@ with open("utils/healthcolors.txt", 'r') as f:
 class BrawlhallaEnv(gym.Env):
     def __init__(self, config: dict, observe_only=False):
         super().__init__()
+
+        if observe_only or os.environ.get("COLAB"):
+            from Dummies import BrawlhallaController, ScreenRecorder
+        else:
+            from ScreenRecorder import ScreenRecorder
+            from BrawlhallaController import BrawlhallaController
 
         self.controller = BrawlhallaController()
 
