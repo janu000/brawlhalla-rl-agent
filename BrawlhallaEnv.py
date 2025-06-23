@@ -5,7 +5,7 @@ import time
 import cv2
 import atexit
 
-from config import *
+from config import config
 from ScreenRecorder import ScreenRecorder
 from BrawlhallaController import BrawlhallaController
 
@@ -20,44 +20,44 @@ with open("healthcolors.txt", 'r') as f:
                 DMG_COLOR_LUT.append(tuple(parts))
 
 class BrawlhallaEnv(gym.Env):
-    def __init__(self, img_shape=(3,1080,1920)):
+    def __init__(self, config: dict):
         super().__init__()
 
         self.controller = BrawlhallaController()
-        self.img_shape = img_shape
+        self.img_shape = config["IMAGE_CHANNELS"], config["IMAGE_WIDTH"], config["IMAGE_HEIGHT"]
         self.num_actions = len(self.controller.ACTION_LUT)
+        self.max_eps_len = config["MAX_EPS_LEN"]
 
         self.observation_space = spaces.Dict({
-            'image': spaces.Box(0, 255, img_shape, dtype=np.uint8),
+            'image': spaces.Box(0, 255, self.img_shape, dtype=np.uint8),
             'last_executed_action': spaces.Box(low=0, high=self.num_actions - 1, shape=(1,), dtype=np.int64) # use 1d box instead of discrete space to prevent one-hot encoding
         })
 
         self.action_space = spaces.Discrete(self.num_actions)
+        
+        self.learning_fps = config["LEARNING_FPS"]
+        self.observe_only = False
 
-        self.recorder = ScreenRecorder(fps=REC_FPS, region=None, buffer_size=8, render=False, monitor_id=GAME_MONITOR_ID, resolution=(img_shape[2], img_shape[1]))
-        self.recorder.start()
-        time.sleep(.1)
-
-        # Save an example image
-        example_frame = self.recorder.get_latest_frame()
-        if example_frame is not None:
-            resized_example_frame = cv2.resize(example_frame, (img_shape[2], img_shape[1]))
-            if img_shape[0] == 1:
-                processed_frame = cv2.cvtColor(resized_example_frame, cv2.COLOR_BGR2GRAY)
-                cv2.imwrite("example_image.png", processed_frame)
-            else:
-                cv2.imwrite("example_image.png", resized_example_frame)
-        else:
-            print("Warning: Could not capture an example frame to save.")
-
-        atexit.register(self.close)
-
-        self.step_time = None
+        self.p_health_pos = config["HEALTH_POS2"]
+        self.o_health_pos = config["HEALTH_POS1"]
 
         self.player_healthtracker = HealthTracker(dmg_color_lut=DMG_COLOR_LUT)
         self.opponent_healthtracker = HealthTracker(dmg_color_lut=DMG_COLOR_LUT)
 
-        self.last_death_time = 0
+        atexit.register(self.close)
+
+        self.step_counter = 0
+        self.step_timer = 0
+        self.recorder = ScreenRecorder(
+            fps=config["REC_FPS"],
+            region=None,
+            buffer_size=8,
+            render=False,
+            monitor_id=config["GAME_MONITOR_ID"],
+            resolution=(self.img_shape[2], self.img_shape[1]),
+            grayscale=(config["IMAGE_CHANNELS"] == 1))
+        
+        self.recorder.start()
 
     def close(self):
         if self.recorder is not None:
@@ -66,40 +66,46 @@ class BrawlhallaEnv(gym.Env):
             cv2.destroyAllWindows()
 
     def reset(self, seed=0):
-        # Reset game or restart episode
-        time.sleep(4) # wait for respawn
-        self.controller.release_all_keys()
-        print(self.controller.pressed_keys)
+        print("reset")
+        # Reset opponent health and wait for player respawn
+        self.controller.release_all_keys(unjam=True)
+        # right_key = self.controller.name_to_keys["right"]
+        # self.controller.press_keys(right_key)
+        time.sleep(2)
+        # self.controller.release_keys(right_key)
         self.controller.reset_o_health()
-        time.sleep(0.5) 
+        time.sleep(3)
+        print("continue")
 
-        obs = self._get_obs(action_idx=5) # Pass default action for reset (5 = idle)
+        obs = self._get_obs(action_idx=5) # Pass default action (5 = idle)
         info = {}
         return obs, info
 
     def step(self, action_idx):
-       
-        self.perform_action(action_idx)
+        self.step_counter += 1
+
+        if not self.observe_only:
+            self.perform_action(action_idx)
 
         # Enforce LEARNING_FPS to keep a consistent fps during training since we dont have full control over the environment
         current_time = time.monotonic()
-        if self.step_time:
-            time_per_frame = 1.0 / LEARNING_FPS
-            elapsed_time = current_time - self.step_time
-            sleep_duration = time_per_frame - elapsed_time
-        else:
-            sleep_duration = 0.5 / LEARNING_FPS
+        
+        time_per_frame = 1.0 / self.learning_fps
+        elapsed_time = current_time - self.step_timer
+        sleep_duration = time_per_frame - elapsed_time
 
         if sleep_duration > 0:
             time.sleep(sleep_duration)
 
-        self.step_time = current_time
+        self.step_timer = current_time
 
         # Read next observation
         obs = self._get_obs(action_idx)
 
         reward = self._compute_reward(action_idx)
-        terminated = (reward <= -0.8)
+        terminated = (reward <= -0.8) or (self.step_counter >= self.max_eps_len)
+        if terminated:
+            self.step_counter = 0
         truncated = False
         info = {}
 
@@ -107,7 +113,10 @@ class BrawlhallaEnv(gym.Env):
 
     def _get_obs(self, action_idx):
 
-        
+        if not isinstance(action_idx, (int, np.integer)):
+            raise TypeError(f"Expected action_idx to be an int or np.integer, but got {type(action_idx).__name__}")
+
+        action_idx = np.int64(action_idx)
     
         frame = self.recorder.get_latest_frame()
         resized_frame = cv2.resize(frame, (self.img_shape[2], self.img_shape[1]))
@@ -123,36 +132,20 @@ class BrawlhallaEnv(gym.Env):
                 f"Image shape mismatch. Expected {self.img_shape}, but got {image.shape}"
             )
 
-        return {"image": image, "last_executed_action": np.array([action_idx], dtype=np.int64)}
+        return {"image": image, "last_executed_action": action_idx}
 
     def perform_action(self, action_idx):
-        keys_to_press = set(self.controller.ACTION_MAPPER.get(action_idx, []))
-
-        # Determine which keys to release (keys that were pressed but are not in the current action)
-        keys_to_release = self.controller.pressed_keys - keys_to_press
-        self.controller.release_keys(keys_to_release)
-
-        self.controller.press_keys(keys_to_press)
+        self.controller.execute_action(action_idx)
 
     def _compute_reward(self, action_idx):
         frame = self.recorder.get_latest_frame()
         
         # get colors at the position of the respective healthbars
-        player_health_bgr = frame[HEALTH2_POS]
-        opponent_health_bgr = frame[HEALTH1_POS]
+        player_health_bgr = frame[self.p_health_pos] # takes in position as (y,x)
+        opponent_health_bgr = frame[self.o_health_pos] # take in position as (y,x)
 
         p_damage, p_died = self.player_healthtracker.update(player_health_bgr)
         o_damage, o_died = self.opponent_healthtracker.update(opponent_health_bgr)
-
-        current_time = time.time()
-
-        # check if we're still within the respawn period
-        if current_time - self.last_death_time < 4:
-            return 0.0
-        
-        # if death occurred, start the reward override timer for respawning
-        if p_died or o_died:
-            self.last_death_time = current_time
         
         r = 0
 

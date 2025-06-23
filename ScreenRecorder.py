@@ -4,7 +4,6 @@ from collections import deque
 import mss
 import numpy as np
 import cv2
-from config import IMAGE_CHANNELS
 
 class ScreenRecorder:
     def __init__(self, fps=30, region=None, buffer_size=30, render=False, monitor_id=1, resolution = (1920, 1080), grayscale=False):
@@ -17,7 +16,7 @@ class ScreenRecorder:
         self.render = render
         self.monitor_id = monitor_id
         self.resolution = resolution
-        self.grayscale = True if IMAGE_CHANNELS == 1 else False
+        self.grayscale = grayscale
 
     def start(self):
         self.running = True

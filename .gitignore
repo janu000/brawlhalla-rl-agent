@@ -25,6 +25,7 @@ temp/blur.py
 # Data
 data/
 example_image.png
+training_logs/
 
 # OS files
 .DS_Store
