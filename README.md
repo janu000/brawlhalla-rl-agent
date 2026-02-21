@@ -1,4 +1,6 @@
-# Brawlhalla RL Agent
+# ⚠️ DISCONTINUED: Brawlhalla RL Agent
+
+> **Notice:** This project is no longer actively maintained or updated. The code is provided "as-is" for educational and archival purposes. It may require updates to work with the latest versions of Brawlhalla or Python dependencies.
 
 A project to train an artificial intelligence (AI) agent to play the video game **Brawlhalla** using deep reinforcement learning. This project captures the game screen, interprets what is happening, and controls the game using simulated keyboard and mouse input—just like a human player would!
 
